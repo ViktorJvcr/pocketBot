@@ -1,78 +1,66 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <SPI.h>
 
+#include "config.h"
 #include "pins.h"
 #include "display/display.h"
-#include "hardware/touch_input.h"
 #include "sensors/prox_sensor.h"
 #include "sensors/imu_sensor.h"
+#include "hardware/touch_input.h"
+#include "animation/face_state.h"
+#include "animation/anim_idle.h"
 
+// ВАЖНО: Передаем только 3 пина (CS, DC, RST) — это включает АППАРАТНЫЙ SPI!
 Adafruit_ST7735 tft = Adafruit_ST7735(&SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
-PocketSprite sprite(SCREEN_W, SCREEN_H);
+PocketSprite sprite(160, 80);
+
+// Экземпляр базовой анимации покоя
+AnimIdle animIdle;
+
+// Таймер кадров (50 FPS = 20 мс)
+unsigned long lastFrameTime = 0;
 
 void setup() {
     Serial.begin(115200);
-    
-    // 1. Запуск шины I2C (SDA=8, SCL=10)
+
+    // 1. Запускаем АППАРАТНЫЙ SPI на наших пинах (SCLK=6, MISO=-1, MOSI=7, CS=5)
+    SPI.begin(TFT_SCLK_PIN, -1, TFT_MOSI_PIN, TFT_CS_PIN);
+
+    // 2. Инициализация общей шины I2C (SDA = 8, SCL = 10, 400 кГц)
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(400000);
 
-    // 2. Инициализация периферии
+    // 3. Инициализация экрана 0.96" ST7735 (160x80) и буфера PocketSprite
     initDisplay(tft, sprite);
-    TouchInput::init();
-    ProxSensor::init();
-    ImuSensor::init();
+    
+    // Разгоняем аппаратный SPI дисплея до 40 МГц (кадр 160x80 улетает за ~5 мс!)
+    tft.setSPISpeed(40000000);
+
+    // 4. Инициализация генератора случайных чисел для живых саккад и морганий
+    randomSeed(micros());
+
+    // 5. Инициализация базовой геометрии лица (160x80) и запуск AnimIdle
+    FaceState::init();
+    animIdle.reset();
+
+    Serial.println("[PocketRobot] Hardware SPI 40MHz & AnimIdle initialized!");
 }
 
 void loop() {
-    ProxSensor::update();
-    ImuSensor::update();
+    unsigned long now = millis();
 
-    sprite.fillSprite(0x0000);
-    
-    // Зеленая рамка по краям экрана
-    sprite.drawRect(0, 0, SCREEN_W, SCREEN_H, 0x03E0);
+    // Рендер-цикл анимации: строго на millis(), ~50 Гц (каждые 20 мс)
+    if (now - lastFrameTime >= 20) {
+        lastFrameTime = now;
 
-    sprite.setTextColor(0x07E0); // Зеленый
-    sprite.setTextSize(1);
+        // Плавная интерполяция палитры (Color Lerp)
+        FaceState::updateColorLerp();
 
-    // Строка 1: Заголовок
-    sprite.setCursor(6, 6);
-    sprite.printf("ATON POCKET C3 TEST");
+        // Расчет пружинной физики, дыхания, моргания и отрисовка в буфер
+        animIdle.runStep(sprite, 0.0f, 0.0f);
 
-    // Строка 2: Датчик приближения APDS-9930
-    sprite.setCursor(6, 20);
-    if (ProxSensor::isConnected()) {
-        sprite.setTextColor(0x07FF); // Cyan
-        sprite.printf("APDS(0x%02X): %4u", ProxSensor::getDeviceId(), ProxSensor::getProximity());
-    } else {
-        sprite.setTextColor(0xF800); // Red
-        sprite.printf("APDS: NOT FOUND!");
+        // Вывод готового кадра 160x80 из ОЗУ на экран без мерцания
+        pushSpriteToDisplay(tft, sprite);
     }
-
-    // Строка 3: BMI160
-    sprite.setCursor(6, 34);
-    if (ImuSensor::isConnected()) {
-        sprite.setTextColor(0xFFE0); // Yellow
-        sprite.printf("BMI(0x%02X) X:%.1f Y:%.1f", 
-                      ImuSensor::getAddress(), ImuSensor::getAccX(), ImuSensor::getAccY());
-    } else {
-        sprite.setTextColor(0xF800); // Red
-        sprite.printf("BMI160: NOT FOUND!");
-    }
-
-    // Строка 4: Сенсорные кнопки TTP223
-    sprite.setCursor(6, 52);
-    sprite.setTextColor(0xFFFF);
-    sprite.print("BTN: ");
-    
-    for (int i = 1; i <= 3; i++) {
-        bool pressed = TouchInput::isPressed(i);
-        sprite.setTextColor(pressed ? 0x0000 : 0x07E0, pressed ? 0x07E0 : 0x0000);
-        sprite.printf(" [%d] ", i);
-    }
-
-    // Выводим буфер кадра на экран без мерцания!
-    pushSpriteToDisplay(tft, sprite);
-    delay(16);
 }

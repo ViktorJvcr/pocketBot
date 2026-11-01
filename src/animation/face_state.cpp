@@ -1,63 +1,87 @@
 #include "face_state.h"
 
-namespace FaceState {
-    State current;
+FacePalette FaceState::current;
+FacePalette FaceState::target;
 
-    void init(Adafruit_ST7735 &tft) {
-        current.colorEye   = tft.color565((uint8_t)current.eyeR, (uint8_t)current.eyeG, (uint8_t)current.eyeB);
-        current.colorGlow1 = tft.color565((uint8_t)current.gl1R, (uint8_t)current.gl1G, (uint8_t)current.gl1B);
-        current.colorGlow2 = tft.color565((uint8_t)current.gl2R, (uint8_t)current.gl2G, (uint8_t)current.gl2B);
+// Стартовые координаты под экран 160x80 (коэфф. 0.5 от старшего робота)
+float FaceState::cx = 80.0f;
+float FaceState::cy = 39.0f;
+float FaceState::spacing = 50.0f;
+float FaceState::lw = 25.0f;
+float FaceState::lh = 40.0f;
+float FaceState::lr = 12.0f;
+float FaceState::rw = 25.0f;
+float FaceState::rh = 40.0f;
+float FaceState::rr = 12.0f;
+float FaceState::mw = 8.0f;
+float FaceState::mh = 2.0f;
+
+uint16_t FaceState::rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
+void FaceState::init() {
+    // Базовый неоново-зеленый (Idle)
+    setTargetPalette(50, 255, 100,   10, 120, 30,   0, 40, 10);
+    current = target;
+    current.colorBg = 0x0000;
+    updateColorLerp(1.0f); // Мгновенно применить на старте
+}
+
+void FaceState::setTargetPalette(
+    uint8_t rE, uint8_t gE, uint8_t bE,
+    uint8_t rG1, uint8_t gG1, uint8_t bG1,
+    uint8_t rG2, uint8_t gG2, uint8_t bG2) 
+{
+    target.rEye = rE;     target.gEye = gE;     target.bEye = bE;
+    target.rGlow1 = rG1;  target.gGlow1 = gG1;  target.bGlow1 = bG1;
+    target.rGlow2 = rG2;  target.gGlow2 = gG2;  target.bGlow2 = bG2;
+}
+
+void FaceState::updateColorLerp(float speed) {
+    current.rEye   += (target.rEye   - current.rEye)   * speed;
+    current.gEye   += (target.gEye   - current.gEye)   * speed;
+    current.bEye   += (target.bEye   - current.bEye)   * speed;
+
+    current.rGlow1 += (target.rGlow1 - current.rGlow1) * speed;
+    current.gGlow1 += (target.gGlow1 - current.gGlow1) * speed;
+    current.bGlow1 += (target.bGlow1 - current.bGlow1) * speed;
+
+    current.rGlow2 += (target.rGlow2 - current.rGlow2) * speed;
+    current.gGlow2 += (target.gGlow2 - current.gGlow2) * speed;
+    current.bGlow2 += (target.bGlow2 - current.bGlow2) * speed;
+
+    current.colorEye   = rgb565((uint8_t)current.rEye,   (uint8_t)current.gEye,   (uint8_t)current.bEye);
+    current.colorGlow1 = rgb565((uint8_t)current.rGlow1, (uint8_t)current.gGlow1, (uint8_t)current.bGlow1);
+    current.colorGlow2 = rgb565((uint8_t)current.rGlow2, (uint8_t)current.gGlow2, (uint8_t)current.bGlow2);
+    current.colorBg    = 0x0000;
+}
+
+void FaceState::prepareTransition(bool squint) {
+    if (squint) {
+        lh = 7.0f;
+        rh = 7.0f;
+        lr = 3.0f;
+        rr = 3.0f;
     }
+}
 
-    void updateColors(Adafruit_ST7735 &tft, float speed) {
-        current.eyeR += (current.t_eyeR - current.eyeR) * speed;
-        current.eyeG += (current.t_eyeG - current.eyeG) * speed;
-        current.eyeB += (current.t_eyeB - current.eyeB) * speed;
+void FaceState::loadGeometry(float &outCx, float &outCy, float &outSp,
+                             float &outLw, float &outLh, float &outLr,
+                             float &outRw, float &outRh, float &outRr,
+                             float &outMw, float &outMh) {
+    outCx = cx; outCy = cy; outSp = spacing;
+    outLw = lw; outLh = lh; outLr = lr;
+    outRw = rw; outRh = rh; outRr = rr;
+    outMw = mw; outMh = mh;
+}
 
-        current.gl1R += (current.t_gl1R - current.gl1R) * speed;
-        current.gl1G += (current.t_gl1G - current.gl1G) * speed;
-        current.gl1B += (current.t_gl1B - current.gl1B) * speed;
-
-        current.gl2R += (current.t_gl2R - current.gl2R) * speed;
-        current.gl2G += (current.t_gl2G - current.gl2G) * speed;
-        current.gl2B += (current.t_gl2B - current.gl2B) * speed;
-
-        current.colorEye   = tft.color565((uint8_t)current.eyeR, (uint8_t)current.eyeG, (uint8_t)current.eyeB);
-        current.colorGlow1 = tft.color565((uint8_t)current.gl1R, (uint8_t)current.gl1G, (uint8_t)current.gl1B);
-        current.colorGlow2 = tft.color565((uint8_t)current.gl2R, (uint8_t)current.gl2G, (uint8_t)current.gl2B);
-    }
-
-    void prepareTransition(bool blink) {
-        if (blink) {
-            // Рефлекторный прищур для экрана 160x80 (вдвое меньше 14.0f)
-            current.lh = 7.0f;
-            current.rh = 7.0f;
-        }
-    }
-
-    void setTargetPalette(float eR, float eG, float eB,
-                          float g1R, float g1G, float g1B,
-                          float g2R, float g2G, float g2B) {
-        current.t_eyeR = eR; current.t_eyeG = eG; current.t_eyeB = eB;
-        current.t_gl1R = g1R; current.t_gl1G = g1G; current.t_gl1B = g1B;
-        current.t_gl2R = g2R; current.t_gl2G = g2G; current.t_gl2B = g2B;
-    }
-
-    void loadGeometry(float &cx, float &cy, float &spacing,
-                      float &lw, float &rw, float &lh, float &rh,
-                      float &mw, float &mh) {
-        cx = current.cx; cy = current.cy; spacing = current.spacing;
-        lw = current.lw; rw = current.rw;
-        lh = current.lh; rh = current.rh;
-        mw = current.mw; mh = current.mh;
-    }
-
-    void saveGeometry(float cx, float cy, float spacing,
-                      float lw, float rw, float lh, float rh,
-                      float mw, float mh) {
-        current.cx = cx; current.cy = cy; current.spacing = spacing;
-        current.lw = lw; current.rw = rw;
-        current.lh = lh; current.rh = rh;
-        current.mw = mw; current.mh = mh;
-    }
+void FaceState::saveGeometry(float inCx, float inCy, float inSp,
+                             float inLw, float inLh, float inLr,
+                             float inRw, float inRh, float inRr,
+                             float inMw, float inMh) {
+    cx = inCx; cy = inCy; spacing = inSp;
+    lw = inLw; lh = inLh; lr = inLr;
+    rw = inRw; rh = inRh; rr = inRr;
+    mw = inMw; mh = inMh;
 }

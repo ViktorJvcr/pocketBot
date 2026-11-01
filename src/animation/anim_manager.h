@@ -1,5 +1,5 @@
 #pragma once
-#include <TFT_eSPI.h>
+#include "../display/display.h
 
 enum class AnimType {
     IDLE,
@@ -17,7 +17,7 @@ enum class AnimType {
 
 namespace AnimManager {
     void init(TFT_eSPI &tft);
-    void runCurrentAnimation(TFT_eSPI &tft, TFT_eSprite &sprite);
+    void runCurrentAnimation(Adafruit_ST7735 &tft, PocketSprite &sprite);
     void setAnimation(AnimType type, bool blink = true);
     AnimType getCurrentAnimation();
 

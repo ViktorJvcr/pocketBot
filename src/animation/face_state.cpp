@@ -3,13 +3,13 @@
 namespace FaceState {
     State current;
 
-    void init(TFT_eSPI &tft) {
+    void init(Adafruit_ST7735 &tft) {
         current.colorEye   = tft.color565((uint8_t)current.eyeR, (uint8_t)current.eyeG, (uint8_t)current.eyeB);
         current.colorGlow1 = tft.color565((uint8_t)current.gl1R, (uint8_t)current.gl1G, (uint8_t)current.gl1B);
         current.colorGlow2 = tft.color565((uint8_t)current.gl2R, (uint8_t)current.gl2G, (uint8_t)current.gl2B);
     }
 
-    void updateColors(TFT_eSPI &tft, float speed) {
+    void updateColors(Adafruit_ST7735 &tft, float speed) {
         current.eyeR += (current.t_eyeR - current.eyeR) * speed;
         current.eyeG += (current.t_eyeG - current.eyeG) * speed;
         current.eyeB += (current.t_eyeB - current.eyeB) * speed;

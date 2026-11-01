@@ -1,66 +1,78 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <SPI.h>
+#include <Wire.h>
 
-#include "config.h"
 #include "pins.h"
+#include "config.h"
 #include "display/display.h"
+#include "hardware/touch_input.h"
 #include "sensors/prox_sensor.h"
 #include "sensors/imu_sensor.h"
-#include "hardware/touch_input.h"
 #include "animation/face_state.h"
 #include "animation/anim_idle.h"
 
-// ВАЖНО: Передаем только 3 пина (CS, DC, RST) — это включает АППАРАТНЫЙ SPI!
+// Аппаратный SPI (без передачи MOSI/SCLK в конструктор!)
 Adafruit_ST7735 tft = Adafruit_ST7735(&SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
-PocketSprite sprite(160, 80);
+PocketSprite sprite(SCREEN_W, SCREEN_H);
 
-// Экземпляр базовой анимации покоя
 AnimIdle animIdle;
 
-// Таймер кадров (50 FPS = 20 мс)
-unsigned long lastFrameTime = 0;
+uint32_t lastFrameMs = 0;
 
 void setup() {
     Serial.begin(115200);
 
-    // 1. Запускаем АППАРАТНЫЙ SPI на наших пинах (SCLK=6, MISO=-1, MOSI=7, CS=5)
+    // 1. Инициализация аппаратного SPI и дисплея (40 МГц для 50+ FPS)
     SPI.begin(TFT_SCLK_PIN, -1, TFT_MOSI_PIN, TFT_CS_PIN);
+    initDisplay(tft, sprite);
+    tft.setSPISpeed(40000000);
 
-    // 2. Инициализация общей шины I2C (SDA = 8, SCL = 10, 400 кГц)
+    // 2. Общая шина I2C (400 кГц, пин 9 не трогаем)
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(400000);
 
-    // 3. Инициализация экрана 0.96" ST7735 (160x80) и буфера PocketSprite
-    initDisplay(tft, sprite);
-    
-    // Разгоняем аппаратный SPI дисплея до 40 МГц (кадр 160x80 улетает за ~5 мс!)
-    tft.setSPISpeed(40000000);
+    // 3. Инициализация сенсоров и кнопок
+    TouchInput::init();
+    bool proxOk = ProxSensor::init();
+    bool imuOk  = ImuSensor::init();
 
-    // 4. Инициализация генератора случайных чисел для живых саккад и морганий
-    randomSeed(micros());
-
-    // 5. Инициализация базовой геометрии лица (160x80) и запуск AnimIdle
+    // 4. Инициализация базового состояния лица и сброс анимации Idle
     FaceState::init();
     animIdle.reset();
 
-    Serial.println("[PocketRobot] Hardware SPI 40MHz & AnimIdle initialized!");
+    Serial.println("=== POCKET ROBOT C3 STARTED ===");
+    Serial.printf("APDS-9930: %s | BMI160: %s (0x%02X)\n",
+                  proxOk ? "OK" : "FAIL",
+                  imuOk  ? "OK" : "FAIL",
+                  ImuSensor::getAddress());
 }
 
 void loop() {
-    unsigned long now = millis();
+    uint32_t now = millis();
 
-    // Рендер-цикл анимации: строго на millis(), ~50 Гц (каждые 20 мс)
-    if (now - lastFrameTime >= 20) {
-        lastFrameTime = now;
+    // Неблокирующий опрос датчиков I2C (внутри свои таймеры на millis)
+    ProxSensor::update();
+    ImuSensor::update();
 
-        // Плавная интерполяция палитры (Color Lerp)
+    // Проверка детекторов IMU в Serial Monitor
+    if (ImuSensor::isSuddenLiftDetected()) {
+        Serial.println("[IMU] Sudden Lift / Jolt detected! (-> SCARED)");
+    }
+    if (ImuSensor::isShakeDetected()) {
+        Serial.println("[IMU] Strong Shake detected! (-> DIZZY)");
+    }
+
+    // Рендер-цикл строго 50 Гц (каждые 20 мс)
+    if (now - lastFrameMs >= 20) {
+        lastFrameMs = now;
+
+        // Плавный переход цветов (Color Lerp)
         FaceState::updateColorLerp();
 
-        // Расчет пружинной физики, дыхания, моргания и отрисовка в буфер
-        animIdle.runStep(sprite, 0.0f, 0.0f);
+        // Шаг анимации Idle с живым параллаксом от BMI160
+        animIdle.runStep(sprite, ImuSensor::getParallaxX(), ImuSensor::getParallaxY());
 
-        // Вывод готового кадра 160x80 из ОЗУ на экран без мерцания
+        // Вывод буфера на экран без мерцания
         pushSpriteToDisplay(tft, sprite);
     }
 }
